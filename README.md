@@ -158,3 +158,10 @@ omit `--sca_dir` to generate from the starting model.
 ## Implementation notes
 
 This package provides the core implementations of circuit extraction, evolution analysis, and alignment.
+
+## Reproduction notes
+
+`repro/` contains an independent Llama-3-8B reproduction of the Section 3.2
+extraction on LLM-LAT, including the launch script, the prompts and generations
+used for inspection, and a note on where the observed behaviour differs from
+Table 1. It does not redistribute the source dataset.
