@@ -77,6 +77,12 @@ This is the circuit extraction configuration for Llama-3-8B. Keep the 100-epoch 
 schedule horizon even when stopping after epoch 2. Outputs include `best_safety_masks.pt`
 and `final_safety_masks.pt`, both dictionaries mapping module paths to **raw logits**.
 
+For a base tokenizer without a chat template, `extract.py` falls back to `User:/Assistant:`.
+Pass `--chat_template_path /path/to/template.jinja` to use an explicit template compatible
+with the model's special tokens. Use the same template for downstream generation; do not
+add a second set of special tokens when tokenizing the rendered template. The built-in
+generation pass also stops at Llama 3's `<|eot_id|>` when a chat template is active.
+
 Optimization gates use `sigmoid(q) > 0.5`; the downstream SCA reader uses `q > 0.5`.
 The diagnostic circuit C1 instead retains the globally highest raw logits among candidate coordinates:
 10,376 for Llama, 9,972 for Qwen, and 7,677 for Mistral. The command above saves logits;

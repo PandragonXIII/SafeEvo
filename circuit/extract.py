@@ -9,6 +9,7 @@ import os
 import json
 import argparse
 import random
+from pathlib import Path
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -47,6 +48,24 @@ def set_random_seed(seed=42):
 def _has_chat_template(tokenizer):
     """Check if tokenizer has a chat template."""
     return hasattr(tokenizer, 'chat_template') and tokenizer.chat_template is not None
+
+
+def load_tokenizer(model_path, chat_template_path=None):
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    if chat_template_path is not None:
+        tokenizer.chat_template = Path(chat_template_path).read_text(encoding="utf-8")
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
+def generation_stop_ids(tokenizer):
+    stop_ids = [tokenizer.eos_token_id]
+    if _has_chat_template(tokenizer):
+        eot = tokenizer.get_added_vocab().get("<|eot_id|>")
+        if eot is not None and eot not in stop_ids:
+            stop_ids.append(eot)
+    return stop_ids
 
 
 def _format_prompt(tokenizer, prompt):
@@ -89,7 +108,8 @@ class SafetyCircuitDataset(Dataset):
 
                 full_text = _format_full(tokenizer, prompt, completion)
                 full_enc = tokenizer(full_text, truncation=True, max_length=max_length,
-                                      padding='max_length', return_tensors="pt")
+                                      padding='max_length', return_tensors="pt",
+                                      add_special_tokens=not has_template)
 
                 input_ids = full_enc["input_ids"].squeeze(0)
                 attention_mask = full_enc["attention_mask"].squeeze(0)
@@ -239,6 +259,7 @@ def generate_and_save_results(model, tokenizer, val_data, batch_size=4,
     tokenizer.padding_side = "left"
     model.eval()
     results = []
+    stop_ids = generation_stop_ids(tokenizer)
 
     set_partition(model, complement=use_inverse_mask)
 
@@ -247,9 +268,10 @@ def generate_and_save_results(model, tokenizer, val_data, batch_size=4,
         prompts_raw = [item['prompt'] for item in batch_items]
         prompts = [_format_prompt(tokenizer, p) for p in prompts_raw]
 
-        inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
+        inputs = tokenizer(prompts, return_tensors="pt", padding=True,
+                           add_special_tokens=not _has_chat_template(tokenizer)).to(model.device)
         outputs = model.generate(**inputs, max_new_tokens=128, do_sample=False,
-                                  pad_token_id=tokenizer.eos_token_id)
+                                 pad_token_id=tokenizer.pad_token_id, eos_token_id=stop_ids)
 
         for j in range(len(prompts)):
             input_len = inputs.input_ids[j].shape[0]
@@ -280,6 +302,8 @@ def parse_args():
                         help="Path to Qwen2.5-1.5B base model")
     parser.add_argument("--checkpoint_path", type=str, default=None,
                         help="Path to LoRA checkpoint (None = use base model directly)")
+    parser.add_argument("--chat_template_path", type=str, default=None,
+                        help="Optional Jinja chat template file to override the tokenizer template")
     parser.add_argument("--checkpoint_name", type=str, default="base",
                         help="Name for output directory (e.g., 'base', 'checkpoint-250')")
     parser.add_argument("--data_path", type=str,
@@ -347,9 +371,7 @@ def main():
 
     # === Load model ===
     print(f"\nLoading base model from {args.base_model_path}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model_path)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = load_tokenizer(args.base_model_path, args.chat_template_path)
 
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model_path, torch_dtype=torch.bfloat16, device_map="cuda:0"
